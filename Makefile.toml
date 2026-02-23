@@ -59,3 +59,15 @@ PKGJSON
     cd pkg && npm pkg fix
     '''
 ]
+
+[tasks.wasm-publish]
+description = "Build and publish WASM package to npm"
+dependencies = ["wasm"]
+script = [
+    '''
+    echo "Publishing WASM package to npm..."
+    cd pkg
+    npm publish
+    echo "Published tla-checker to npm!"
+    '''
+]
