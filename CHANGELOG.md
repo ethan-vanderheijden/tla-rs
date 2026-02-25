@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.3] - 2026-02-25
+
+### Fixed
+
+- Inline `\/` operators within bulleted disjunction lists (e.g., `\/ A \/ B \/ C` on one line)
+- `SPECIFICATION` cfg directive failing to find definitions ending with `Spec`
+- Nested bulleted `\/` lists inside parentheses now use `parse_and_item` for correct inline handling
+
 ## [0.3.1] - 2026-02-14
 
 ### Added
