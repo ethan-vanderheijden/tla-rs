@@ -615,10 +615,15 @@ fn find_box_action(expr: &Expr) -> Option<Expr> {
     }
 }
 
-fn leftmost_conjunct(expr: &Expr) -> &Expr {
+fn collect_init(expr: &Expr) -> Option<Expr> {
     match expr {
-        Expr::And(l, _) => leftmost_conjunct(l),
-        other => other,
+        Expr::BoxAction(_, _) => None,
+        Expr::And(l, r) => match (collect_init(l), collect_init(r)) {
+            (Some(a), Some(b)) => Some(Expr::And(Box::new(a), Box::new(b))),
+            (a, None) => a,
+            (None, b) => b,
+        },
+        other => Some(other.clone()),
     }
 }
 
@@ -626,7 +631,7 @@ fn resolve_specification(spec_name: &Arc<str>, spec: &mut Spec) -> Result<(), St
     match spec.definitions.get(spec_name.as_ref()) {
         Some((params, expr)) if params.is_empty() => {
             if let Some(next_expr) = find_box_action(expr) {
-                spec.init = Some(leftmost_conjunct(expr).clone());
+                spec.init = Some(collect_init(expr).unwrap_or(Expr::Lit(Value::Bool(true))));
                 spec.next = Some(next_expr);
                 return Ok(());
             }
@@ -999,6 +1004,65 @@ mod tests {
             format!("{:?}", spec.next.unwrap()),
             format!("{next_expr:?}")
         );
+    }
+
+    #[test]
+    fn apply_config_specification_inlined_multi_var() {
+        let mut spec = Spec {
+            vars: vec![Arc::from("x"), Arc::from("y")],
+            init: None,
+            next: None,
+            invariants: vec![],
+            invariant_names: vec![],
+            definitions: std::collections::BTreeMap::new(),
+            instances: vec![],
+            extends: vec![],
+            fairness: vec![],
+            assumes: vec![],
+            liveness_properties: vec![],
+            constants: vec![],
+        };
+
+        let init_part_1 = Expr::In(
+            Box::new(Expr::Var(Arc::from("x"))),
+            Box::new(Expr::SetEnum(vec![Expr::Lit(Value::Int(1))])),
+        );
+        let init_part_2 = Expr::In(
+            Box::new(Expr::Var(Arc::from("y"))),
+            Box::new(Expr::SetEnum(vec![Expr::Lit(Value::Bool(true))])),
+        );
+        let next_expr = Expr::Var(Arc::from("SomeNext"));
+        let spec_body = Expr::And(
+            Box::new(Expr::And(
+                Box::new(init_part_1.clone()),
+                Box::new(init_part_2.clone()),
+            )),
+            Box::new(Expr::BoxAction(
+                Box::new(next_expr.clone()),
+                Arc::from("vars"),
+            )),
+        );
+        spec.definitions
+            .insert(Arc::from("Spec"), (vec![], spec_body));
+
+        let cfg = parse_cfg("SPECIFICATION Spec").unwrap();
+        let mut domains = Env::new();
+        let mut checker_config = CheckerConfig::default();
+
+        apply_config(
+            &cfg,
+            &mut spec,
+            &mut domains,
+            &mut checker_config,
+            &[],
+            &[],
+            false,
+        )
+        .unwrap();
+
+        let expected_init = Expr::And(Box::new(init_part_1), Box::new(init_part_2));
+        assert_eq!(spec.init.unwrap(), expected_init);
+        assert_eq!(spec.next.unwrap(), next_expr);
     }
 
     #[test]
