@@ -49,6 +49,154 @@ tla-rs auto-detects invariants by name prefix. Definitions starting with `Inv`, 
 
 `NotSolved` is for reachability puzzles (DieHard, N-Queens). The checker finds the invariant violation, and the counterexample trace is the solution.
 
+## Writing Actions
+
+The shape of your actions determines how readable, scalable, and debuggable your spec is. These patterns come from modeling distributed protocols (TwoPhase, Paxos), team dynamics, equipment sync, and collaborative editing.
+
+### Separate Variables, Not Records
+
+Don't pack all state into one record. The state count is the same either way — a resource allocation spec with 2 users and a bounded counter produces 32 states and 44 transitions whether you use a single `system` record or three separate variables. But separate variables make each action's footprint obvious: you can see exactly what changes and what doesn't, and UNCHANGED clauses document the scope of every action.
+
+Bad — a single record variable:
+```tla
+VARIABLE system
+
+Init == system = [phase |-> "idle", count |-> 0, owner |-> "none"]
+
+Advance ==
+    /\ system.phase = "idle"
+    /\ system' = [system EXCEPT !.phase = "active", !.count = @ + 1]
+```
+
+Good — separate variables with explicit UNCHANGED:
+```tla
+VARIABLES phase, count, owner
+
+Init ==
+    /\ phase = "idle"
+    /\ count = 0
+    /\ owner = "none"
+
+Advance ==
+    /\ phase = "idle"
+    /\ phase' = "active"
+    /\ count' = count + 1
+    /\ UNCHANGED <<owner>>
+```
+
+The record version hides which fields each action touches. With separate variables, a missing `UNCHANGED` is a checker error, so you can't accidentally leave a variable unspecified.
+
+### Managing UNCHANGED
+
+Define a `vars` tuple once at the top of your spec:
+
+```tla
+vars == <<phase, count, owner>>
+```
+
+Every action must account for every variable — either assign its primed version or list it in UNCHANGED. When you add a new variable to `vars`, the checker will flag every action that doesn't mention it, so missing updates surface immediately rather than hiding as silent stuttering.
+
+The TwoPhase spec shows this clearly: `TMCommit` sets `tmState'` and `msgs'`, then explicitly declares `UNCHANGED <<rmState, tmPrepared>>`. Every variable is accounted for in every action.
+
+### Action Decomposition
+
+Break your Next predicate into small, named, parameterized operators. Each action represents one atomic step by one participant.
+
+From TwoPhase:
+```tla
+RMPrepare(rm) ==
+    /\ rmState[rm] = "working"
+    /\ rmState' = [rmState EXCEPT ![rm] = "prepared"]
+    /\ msgs' = msgs \cup {[type |-> "Prepared", rm |-> rm]}
+    /\ UNCHANGED <<tmState, tmPrepared>>
+
+RMChooseToAbort(rm) ==
+    /\ rmState[rm] = "working"
+    /\ rmState' = [rmState EXCEPT ![rm] = "aborted"]
+    /\ UNCHANGED <<tmState, tmPrepared, msgs>>
+
+TPNext ==
+    \/ TMCommit \/ TMAbort
+    \/ \E rm \in RM :
+         TMRcvPrepared(rm) \/ RMPrepare(rm) \/ RMChooseToAbort(rm)
+           \/ RMRcvCommitMsg(rm) \/ RMRcvAbortMsg(rm)
+```
+
+Each action has a guard (enabling condition), an effect (primed variable assignments), and an UNCHANGED clause. The `\E rm \in RM` in Next quantifies over participants — one RM takes one step per transition. This pattern scales: adding a new role means adding new actions and one more disjunct in Next.
+
+### LET-IN for Chained Modifications
+
+When one update depends on another in the same step — like completing a task and conditionally resuming the next one — use LET to name the intermediate result:
+
+```tla
+FinishTask(t) ==
+    /\ taskState[t] = "running"
+    /\ LET newState == [taskState EXCEPT ![t] = "done"]
+       IN taskState' = IF \E t2 \in Tasks : newState[t2] = "blocked"
+                        THEN [newState EXCEPT ![CHOOSE t2 \in Tasks : newState[t2] = "blocked"] = "ready"]
+                        ELSE newState
+```
+
+The alternative — numbered temporaries like `taskState1`, `taskState2` — clutters the spec and forces you to track which version is "current." LET makes the data flow explicit: compute the intermediate state, then decide what to do next based on it.
+
+### State as Functions
+
+Use `[Key -> Domain]` instead of N separate boolean variables. Functions scale with constants — adding a process doesn't add a variable declaration.
+
+Bad — one variable per process:
+```tla
+VARIABLES p1_ready, p2_ready, p3_ready
+
+Init ==
+    /\ p1_ready = FALSE
+    /\ p2_ready = FALSE
+    /\ p3_ready = FALSE
+```
+
+Good — a function over the process set:
+```tla
+CONSTANT Proc
+VARIABLE ready
+
+Init == ready = [p \in Proc |-> FALSE]
+
+MarkReady(p) ==
+    /\ ready[p] = FALSE
+    /\ ready' = [ready EXCEPT ![p] = TRUE]
+```
+
+EXCEPT works naturally on functions: `[rmState EXCEPT ![rm] = "prepared"]` updates one key and leaves the rest unchanged. The TwoPhase spec models the state of every resource manager this way — `rmState` is a function from `RM` to `{"working", "prepared", "committed", "aborted"}`. Adding a fifth RM means changing the constant, not the spec.
+
+The state space is identical either way — 3 independent booleans and a function `[Proc |-> BOOLEAN]` with `|Proc| = 3` both produce 8 states and 24 transitions. The advantage is purely structural: the function version doesn't require code changes when you scale up.
+
+### Keep State Flat
+
+Avoid nested records. TLA+ supports `[f EXCEPT ![x][y] = v]` but it's hard to read and error-prone. If you need hierarchy, use composite keys or separate function variables.
+
+Bad — nested records:
+```tla
+VARIABLE nodes
+Init == nodes = [n \in NodeIds |-> [status |-> "up", queue |-> <<>>]]
+
+HandleMsg(n, msg) ==
+    /\ nodes' = [nodes EXCEPT ![n] = [@ EXCEPT !.queue = Append(@, msg)]]
+```
+
+Good — separate function variables:
+```tla
+VARIABLES nodeStatus, nodeQueue
+
+Init ==
+    /\ nodeStatus = [n \in NodeIds |-> "up"]
+    /\ nodeQueue = [n \in NodeIds |-> <<>>]
+
+HandleMsg(n, msg) ==
+    /\ nodeQueue' = [nodeQueue EXCEPT ![n] = Append(@, msg)]
+    /\ UNCHANGED <<nodeStatus>>
+```
+
+The flat version is easier to read, each action's scope is obvious from its UNCHANGED clause, and you avoid the `[@ EXCEPT !.field = ...]` nesting that gets unreadable past two levels. Like the record vs. separate variables case, state counts are identical — 2 nodes with status and a bounded queue produce 16 states and 48 transitions in both the nested and flat versions. The benefit is readability, not performance.
+
 ## Bug Hunting
 
 The most effective bug-hunting technique is comparative analysis: write the correct spec, then create a variant that removes exactly one guard or precondition. The difference in behavior reveals what that guard was protecting.
