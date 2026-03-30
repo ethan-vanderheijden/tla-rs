@@ -11,9 +11,9 @@ use std::sync::Arc;
 use tla_checker::Source;
 use tla_checker::ast::{Env, Spec, Value};
 use tla_checker::checker::{
-    CheckResult, CheckStats, CheckerConfig, check, check_result_to_json, eval_error_to_diagnostic,
-    format_eval_error, format_trace, format_trace_with_actions, format_trace_with_diffs,
-    write_trace_json,
+    CheckResult, CheckStats, CheckerConfig, PrepareSpecError, check, check_result_to_json,
+    eval_error_to_diagnostic, format_eval_error, format_trace, format_trace_with_actions,
+    format_trace_with_diffs, write_trace_json,
 };
 use tla_checker::config::{apply_config, parse_cfg, parse_constant_value, split_top_level};
 use tla_checker::diagnostic::{ColorConfig, Diagnostic};
@@ -692,7 +692,7 @@ fn main() -> ExitCode {
 
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(ref replay_file) = replay_path {
-        match run_interactive_replay(&spec, &domains, replay_file) {
+        match run_interactive_replay(&spec, &domains, &spec_path, replay_file) {
             Ok(()) => return ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("replay mode error: {}", e);
@@ -703,7 +703,7 @@ fn main() -> ExitCode {
 
     #[cfg(not(target_arch = "wasm32"))]
     if interactive_mode {
-        match run_interactive(&spec, &domains) {
+        match run_interactive(&spec, &domains, &spec_path) {
             Ok(()) => return ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("interactive mode error: {}", e);
@@ -1075,7 +1075,13 @@ fn main() -> ExitCode {
             eprintln!("{}", diag.render_colored(&source, &colors));
             ExitCode::FAILURE
         }
-        CheckResult::MissingConstants(missing) => {
+        CheckResult::PrepareError(PrepareSpecError::InstanceError(e)) => {
+            let diag =
+                eval_error_to_diagnostic(&e).with_note("error occurred while evaluating instance");
+            eprintln!("{}", diag.render_colored(&source, &colors));
+            ExitCode::FAILURE
+        }
+        CheckResult::PrepareError(PrepareSpecError::MissingConstants(missing)) => {
             let names: Vec<&str> = missing.iter().map(|c| c.as_ref()).collect();
             let example: String = names
                 .iter()
@@ -1087,7 +1093,7 @@ fn main() -> ExitCode {
             eprintln!("{}", diag.render_colored(&source, &colors));
             ExitCode::FAILURE
         }
-        CheckResult::AssumeViolation(idx) => {
+        CheckResult::PrepareError(PrepareSpecError::AssumeViolation(idx)) => {
             let diag = Diagnostic::error("ASSUME constraint evaluated to FALSE")
                 .with_note(format!(
                     "ASSUME constraint {} is not satisfied by current constant values",
@@ -1097,7 +1103,7 @@ fn main() -> ExitCode {
             eprintln!("{}", diag.render_colored(&source, &colors));
             ExitCode::FAILURE
         }
-        CheckResult::AssumeError(idx, e) => {
+        CheckResult::PrepareError(PrepareSpecError::AssumeError(idx, e)) => {
             let diag = eval_error_to_diagnostic(&e)
                 .with_note(format!("error occurred while evaluating ASSUME {}", idx));
             eprintln!("{}", diag.render_colored(&source, &colors));

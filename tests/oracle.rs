@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use tla_checker::ast::{Env, Value};
-use tla_checker::checker::{CheckResult, CheckerConfig, check};
+use tla_checker::checker::{CheckResult, CheckerConfig, PrepareSpecError, check};
 use tla_checker::config::{apply_config, parse_cfg};
 use tla_checker::parser::parse;
 
@@ -146,7 +146,7 @@ fn test_should_error_missing_constant() {
     let result = check(&spec, &domains, &config);
 
     match result {
-        CheckResult::MissingConstants(missing) => {
+        CheckResult::PrepareError(PrepareSpecError::MissingConstants(missing)) => {
             assert!(missing.iter().any(|c| c.as_ref() == "MAX"));
         }
         other => panic!("should report missing constant MAX, got: {:?}", other),
@@ -265,7 +265,10 @@ fn test_should_fail_assume_constraint() {
     let result = check(&spec, &domains, &config);
 
     assert!(
-        matches!(result, CheckResult::AssumeViolation(0)),
+        matches!(
+            result,
+            CheckResult::PrepareError(PrepareSpecError::AssumeViolation(0))
+        ),
         "assume_constraint.tla with N=20 should violate ASSUME, got: {:?}",
         result
     );
@@ -800,7 +803,7 @@ fn test_should_error_extends_missing_module() {
     let path = Path::new("test_cases/should_error/extends_missing_module.tla");
     let result = check_spec_file(path);
     match result {
-        CheckResult::InitError(e) => {
+        CheckResult::PrepareError(PrepareSpecError::InstanceError(e)) => {
             let msg = format!("{:?}", e);
             assert!(
                 msg.contains("NotThere"),
@@ -809,7 +812,7 @@ fn test_should_error_extends_missing_module() {
             );
         }
         other => panic!(
-            "extends_missing_module.tla should produce InitError, got: {:?}",
+            "extends_missing_module.tla should produce PrepareSpecError::InstanceError, got: {:?}",
             other
         ),
     }
@@ -868,7 +871,7 @@ fn test_should_error_extends_parse_error() {
     let path = Path::new("test_cases/should_error/extends_parse_error/extends_parse_error.tla");
     let result = check_spec_file(path);
     match result {
-        CheckResult::InitError(e) => {
+        CheckResult::PrepareError(PrepareSpecError::InstanceError(e)) => {
             let msg = format!("{:?}", e);
             assert!(
                 msg.contains("Broken"),
@@ -877,7 +880,7 @@ fn test_should_error_extends_parse_error() {
             );
         }
         other => panic!(
-            "extends_parse_error.tla should produce InitError, got: {:?}",
+            "extends_parse_error.tla should produce PrepareSpecError::InstanceError, got: {:?}",
             other
         ),
     }
@@ -888,7 +891,7 @@ fn test_should_error_extends_cycle() {
     let path = Path::new("test_cases/should_error/extends_cycle/extends_cycle.tla");
     let result = check_spec_file_allow_deadlock(path);
     match result {
-        CheckResult::InitError(e) => {
+        CheckResult::PrepareError(PrepareSpecError::InstanceError(e)) => {
             let msg = format!("{:?}", e);
             assert!(
                 msg.contains("cyclic"),
@@ -897,7 +900,7 @@ fn test_should_error_extends_cycle() {
             );
         }
         other => panic!(
-            "extends_cycle.tla should produce InitError, got: {:?}",
+            "extends_cycle.tla should produce PrepareSpecError::InstanceError, got: {:?}",
             other
         ),
     }

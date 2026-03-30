@@ -6,7 +6,7 @@ mod state;
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crossterm::{
@@ -17,24 +17,18 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::ast::{Env, Spec, TransitionWithGuards};
+use crate::checker;
 use crate::diagnostic::Diagnostic;
-use crate::eval::{
-    Definitions, init_states, make_primed_names, next_states, next_states_with_guards,
-};
-use crate::stdlib;
+use crate::eval::{init_states, make_primed_names, next_states, next_states_with_guards};
 
 use self::input::{AppContext, run_app, run_replay_app};
 use self::serialize::json_to_state;
 use self::state::ExplorerState;
 
-pub fn run_interactive(spec: &Spec, domains: &Env) -> io::Result<()> {
-    let mut env = domains.clone();
-    stdlib::load_builtins(&mut env);
-    for module in &spec.extends {
-        stdlib::load_module(module, &mut env);
-    }
-
-    let defs: Definitions = spec.definitions.clone();
+pub fn run_interactive(spec: &Spec, domains: &Env, spec_path: &str) -> io::Result<()> {
+    let spec_path_buf = PathBuf::from(spec_path);
+    let (mut env, defs) = checker::prepare_spec(spec, domains, Some(&spec_path_buf), false)
+        .expect("Failed to prepare spec");
 
     let init_expr = spec.init.as_ref().ok_or_else(|| {
         io::Error::new(
@@ -148,7 +142,12 @@ pub fn run_interactive(spec: &Spec, domains: &Env) -> io::Result<()> {
     result
 }
 
-pub fn run_interactive_replay(spec: &Spec, domains: &Env, replay_file: &Path) -> io::Result<()> {
+pub fn run_interactive_replay(
+    spec: &Spec,
+    domains: &Env,
+    spec_path: &str,
+    replay_file: &Path,
+) -> io::Result<()> {
     let content = fs::read_to_string(replay_file)?;
     let json: serde_json::Value = serde_json::from_str(&content)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("invalid JSON: {}", e)))?;
@@ -189,13 +188,10 @@ pub fn run_interactive_replay(spec: &Spec, domains: &Env, replay_file: &Path) ->
         ));
     }
 
-    let mut env = domains.clone();
-    stdlib::load_builtins(&mut env);
-    for module in &spec.extends {
-        stdlib::load_module(module, &mut env);
-    }
+    let spec_path_buf = PathBuf::from(spec_path);
+    let (mut env, defs) = checker::prepare_spec(spec, domains, Some(&spec_path_buf), false)
+        .expect("Failed to prepare spec");
 
-    let defs: Definitions = spec.definitions.clone();
     let next_expr = spec.next.as_ref().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,

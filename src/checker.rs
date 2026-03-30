@@ -121,12 +121,18 @@ pub enum CheckResult {
     InitError(EvalError),
     NextError(EvalError, Vec<State>, Option<String>),
     InvariantError(EvalError, Vec<State>, Option<String>),
-    AssumeViolation(usize),
-    AssumeError(usize, EvalError),
     MaxStatesExceeded(CheckStats),
     MaxDepthExceeded(CheckStats),
     NoInitialStates,
+    PrepareError(PrepareSpecError),
+}
+
+#[derive(Debug)]
+pub enum PrepareSpecError {
+    InstanceError(EvalError),
     MissingConstants(Vec<Arc<str>>),
+    AssumeViolation(usize),
+    AssumeError(usize, EvalError),
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -206,20 +212,21 @@ fn load_module_extends(
     Ok(())
 }
 
-pub fn check(spec: &Spec, domains: &Env, config: &CheckerConfig) -> CheckResult {
-    let user_constants = domains.clone();
-    let mut domains = Env::new();
+pub fn prepare_spec(
+    spec: &Spec,
+    domains: &Env,
+    spec_path: Option<&PathBuf>,
+    quiet: bool,
+) -> Result<(Env, Definitions), PrepareSpecError> {
+    let mut domains = domains.clone();
     stdlib::load_builtins(&mut domains);
     for module in &spec.extends {
         stdlib::load_module(module, &mut domains);
     }
-    for (k, v) in user_constants {
-        domains.insert(k, v);
-    }
 
     let mut extended_defs: Definitions = BTreeMap::new();
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(ref spec_path) = config.spec_path {
+    if let Some(spec_path) = spec_path {
         let mut registry = ModuleRegistry::new();
         let mut ancestors: Vec<Arc<str>> = Vec::new();
         for module in &spec.extends {
@@ -234,7 +241,7 @@ pub fn check(spec: &Spec, domains: &Env, config: &CheckerConfig) -> CheckResult 
                 &mut extended_defs,
                 &mut ancestors,
             ) {
-                return CheckResult::InitError(err);
+                return Err(PrepareSpecError::InstanceError(err));
             }
         }
     }
@@ -251,7 +258,7 @@ pub fn check(spec: &Spec, domains: &Env, config: &CheckerConfig) -> CheckResult 
 
     #[cfg(not(target_arch = "wasm32"))]
     if !spec.instances.is_empty()
-        && let Some(ref spec_path) = config.spec_path
+        && let Some(spec_path) = spec_path
     {
         let mut registry = ModuleRegistry::new();
         for inst in &spec.instances {
@@ -261,7 +268,7 @@ pub fn check(spec: &Spec, domains: &Env, config: &CheckerConfig) -> CheckResult 
             match registry.load(&inst.module_name, spec_path) {
                 Ok(_) => {}
                 Err(e) => {
-                    if !config.quiet {
+                    if !quiet {
                         eprintln!(
                             "  Warning: could not load module {}: {:?}",
                             inst.module_name, e
@@ -273,14 +280,14 @@ pub fn check(spec: &Spec, domains: &Env, config: &CheckerConfig) -> CheckResult 
         match resolve_instances(spec, &registry) {
             Ok((static_instances, param_instances)) => {
                 let total = static_instances.len() + param_instances.len();
-                if total > 0 && !config.quiet {
+                if total > 0 && !quiet {
                     eprintln!("  Resolved {} instance(s)", total);
                 }
                 set_resolved_instances(static_instances);
                 set_parameterized_instances(param_instances);
             }
             Err(e) => {
-                if !config.quiet {
+                if !quiet {
                     eprintln!("  Warning: could not resolve instances: {:?}", e);
                 }
             }
@@ -294,15 +301,15 @@ pub fn check(spec: &Spec, domains: &Env, config: &CheckerConfig) -> CheckResult 
         .cloned()
         .collect();
     if !missing.is_empty() {
-        return CheckResult::MissingConstants(missing);
+        return Err(PrepareSpecError::MissingConstants(missing));
     }
 
     for (idx, assume) in spec.assumes.iter().enumerate() {
         match eval(assume, &mut domains, &defs) {
             Ok(Value::Bool(true)) => {}
-            Ok(Value::Bool(false)) => return CheckResult::AssumeViolation(idx),
+            Ok(Value::Bool(false)) => return Err(PrepareSpecError::AssumeViolation(idx)),
             Ok(_) => {
-                return CheckResult::AssumeError(
+                return Err(PrepareSpecError::AssumeError(
                     idx,
                     EvalError::TypeMismatch {
                         expected: "Bool",
@@ -310,11 +317,21 @@ pub fn check(spec: &Spec, domains: &Env, config: &CheckerConfig) -> CheckResult 
                         context: Some("ASSUME evaluation"),
                         span: None,
                     },
-                );
+                ));
             }
-            Err(e) => return CheckResult::AssumeError(idx, e),
+            Err(e) => return Err(PrepareSpecError::AssumeError(idx, e)),
         }
     }
+
+    Ok((domains, defs))
+}
+
+pub fn check(spec: &Spec, domains: &Env, config: &CheckerConfig) -> CheckResult {
+    let (domains, defs) = match prepare_spec(spec, domains, config.spec_path.as_ref(), config.quiet)
+    {
+        Ok(r) => r,
+        Err(e) => return CheckResult::PrepareError(e),
+    };
 
     let mut symmetry = SymmetryConfig::new();
     for sym_const in &config.symmetric_constants {
@@ -1290,20 +1307,26 @@ pub fn check_result_to_json(result: &CheckResult, spec: &Spec) -> String {
             )
         }
         CheckResult::NoInitialStates => r#"{"status": "no_initial_states"}"#.to_string(),
-        CheckResult::MissingConstants(missing) => {
+        CheckResult::PrepareError(PrepareSpecError::InstanceError(e)) => {
+            format!(
+                r#"{{"status": "instance_error", "error": "{}"}}"#,
+                format_eval_error(e).replace('"', "\\\"")
+            )
+        }
+        CheckResult::PrepareError(PrepareSpecError::MissingConstants(missing)) => {
             let names: Vec<_> = missing.iter().map(|c| format!("\"{}\"", c)).collect();
             format!(
                 r#"{{"status": "missing_constants", "constants": [{}]}}"#,
                 names.join(", ")
             )
         }
-        CheckResult::AssumeViolation(idx) => {
+        CheckResult::PrepareError(PrepareSpecError::AssumeViolation(idx)) => {
             format!(
                 r#"{{"status": "assume_violation", "assume_index": {}}}"#,
                 idx
             )
         }
-        CheckResult::AssumeError(idx, e) => {
+        CheckResult::PrepareError(PrepareSpecError::AssumeError(idx, e)) => {
             format!(
                 r#"{{"status": "assume_error", "assume_index": {}, "error": "{}"}}"#,
                 idx,
