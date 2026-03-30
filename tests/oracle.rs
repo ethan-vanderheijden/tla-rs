@@ -43,6 +43,17 @@ fn test_should_pass_counter() {
 }
 
 #[test]
+fn test_should_pass_counter_instantiated() {
+    let path = Path::new("test_cases/should_pass/counter_instance.tla");
+    let result = check_spec_file_allow_deadlock(path);
+    assert!(
+        matches!(result, CheckResult::Ok(_)),
+        "counter_instance.tla should pass, got: {:?}",
+        result
+    );
+}
+
+#[test]
 fn test_should_pass_two_bit() {
     let path = Path::new("test_cases/should_pass/two_bit.tla");
     let result = check_spec_file_allow_deadlock(path);

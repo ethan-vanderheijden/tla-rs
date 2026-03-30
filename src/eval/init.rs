@@ -9,7 +9,10 @@ use super::error::Result;
 #[cfg(feature = "profiling")]
 use super::global_state::PROFILING_STATS;
 use super::helpers::eval_bool;
-use crate::ast::{Env, Expr, State, Value};
+use crate::{
+    ast::{Env, Expr, State, Value},
+    eval::candidates::{bind_params, restore_env},
+};
 
 pub fn init_states(
     init: &Expr,
@@ -114,6 +117,33 @@ fn infer_init_candidates(
             Expr::And(l, r) | Expr::Or(l, r) => {
                 collect(l, env, var, defs, candidates)?;
                 collect(r, env, var, defs, candidates)?;
+            }
+            Expr::QualifiedCall(instance_expr, op, args) => {
+                use super::global_state::RESOLVED_INSTANCES;
+
+                match instance_expr.as_ref() {
+                    Expr::Var(instance_name) => {
+                        let mut err = Ok(());
+                        RESOLVED_INSTANCES.with(|inst_ref| {
+                            let instances = inst_ref.borrow();
+                            if let Some(instance_defs) = instances.get(instance_name)
+                                && let Some((params, body)) = instance_defs.get(op)
+                                && params.len() == args.len()
+                            {
+                                let mut merged_defs = defs.clone();
+                                for (name, def) in instance_defs {
+                                    merged_defs.insert(name.clone(), def.clone());
+                                }
+                                let params: Vec<Arc<str>> = params.clone();
+                                let saved = bind_params(&params, args, env, defs);
+                                err = collect(body, env, var, &merged_defs, candidates);
+                                restore_env(env, saved);
+                            }
+                        });
+                        err?;
+                    }
+                    _ => {}
+                }
             }
             _ => {}
         }
