@@ -149,30 +149,23 @@ fn infer_init_candidates(
                             if let Some(param_inst) = instances.get(instance_name)
                                 && instance_args.len() == param_inst.params.len()
                             {
-                                let inst_arg_vals: Option<Vec<Value>> = instance_args
-                                    .iter()
-                                    .map(|arg| eval(arg, env, defs).ok())
-                                    .collect();
+                                let instance_defs = super::resolve_parameterized_defs_symbolic(
+                                    param_inst,
+                                    instance_args.to_vec(),
+                                );
 
-                                if let Some(inst_arg_vals) = inst_arg_vals {
-                                    let instance_defs = super::resolve_parameterized_defs(
-                                        param_inst,
-                                        inst_arg_vals,
-                                    );
-
-                                    if let Some((params, body)) = instance_defs.get(op)
-                                        && params.len() == args.len()
-                                    {
-                                        let mut merged_defs = defs.clone();
-                                        for (name, def) in &instance_defs {
-                                            merged_defs.insert(name.clone(), def.clone());
-                                        }
-                                        let params: Vec<Arc<str>> = params.clone();
-                                        let body = body.clone();
-                                        let saved = bind_params(&params, args, env, defs);
-                                        err = collect(&body, env, var, &merged_defs, candidates);
-                                        restore_env(env, saved);
+                                if let Some((params, body)) = instance_defs.get(op)
+                                    && params.len() == args.len()
+                                {
+                                    let mut merged_defs = defs.clone();
+                                    for (name, def) in &instance_defs {
+                                        merged_defs.insert(name.clone(), def.clone());
                                     }
+                                    let params: Vec<Arc<str>> = params.clone();
+                                    let body = body.clone();
+                                    let saved = bind_params(&params, args, env, defs);
+                                    err = collect(&body, env, var, &merged_defs, candidates);
+                                    restore_env(env, saved);
                                 }
                             }
                         });

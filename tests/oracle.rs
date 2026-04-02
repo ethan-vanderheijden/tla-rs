@@ -962,3 +962,18 @@ fn test_parameterized_instance_in_init() {
         result
     );
 }
+
+#[test]
+fn test_parameterized_instance_init_unbound_var() {
+    let path = Path::new("test_cases/should_pass/param_instance_init_unbound.tla");
+    let result = check_spec_file_allow_deadlock(path);
+    match result {
+        CheckResult::Ok(stats) => {
+            assert_eq!(
+                stats.states_explored, 1,
+                "should find exactly 1 initial state"
+            );
+        }
+        other => panic!("param_instance_init_unbound.tla should pass, got: {other:?}"),
+    }
+}
