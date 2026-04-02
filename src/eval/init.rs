@@ -119,7 +119,7 @@ fn infer_init_candidates(
                 collect(r, env, var, defs, candidates)?;
             }
             Expr::QualifiedCall(instance_expr, op, args) => {
-                use super::global_state::RESOLVED_INSTANCES;
+                use super::global_state::{PARAMETERIZED_INSTANCES, RESOLVED_INSTANCES};
 
                 match instance_expr.as_ref() {
                     Expr::Var(instance_name) => {
@@ -138,6 +138,42 @@ fn infer_init_candidates(
                                 let saved = bind_params(&params, args, env, defs);
                                 err = collect(body, env, var, &merged_defs, candidates);
                                 restore_env(env, saved);
+                            }
+                        });
+                        err?;
+                    }
+                    Expr::FnCall(instance_name, instance_args) => {
+                        let mut err = Ok(());
+                        PARAMETERIZED_INSTANCES.with(|inst_ref| {
+                            let instances = inst_ref.borrow();
+                            if let Some(param_inst) = instances.get(instance_name)
+                                && instance_args.len() == param_inst.params.len()
+                            {
+                                let inst_arg_vals: Option<Vec<Value>> = instance_args
+                                    .iter()
+                                    .map(|arg| eval(arg, env, defs).ok())
+                                    .collect();
+
+                                if let Some(inst_arg_vals) = inst_arg_vals {
+                                    let instance_defs = super::resolve_parameterized_defs(
+                                        param_inst,
+                                        inst_arg_vals,
+                                    );
+
+                                    if let Some((params, body)) = instance_defs.get(op)
+                                        && params.len() == args.len()
+                                    {
+                                        let mut merged_defs = defs.clone();
+                                        for (name, def) in &instance_defs {
+                                            merged_defs.insert(name.clone(), def.clone());
+                                        }
+                                        let params: Vec<Arc<str>> = params.clone();
+                                        let body = body.clone();
+                                        let saved = bind_params(&params, args, env, defs);
+                                        err = collect(&body, env, var, &merged_defs, candidates);
+                                        restore_env(env, saved);
+                                    }
+                                }
                             }
                         });
                         err?;

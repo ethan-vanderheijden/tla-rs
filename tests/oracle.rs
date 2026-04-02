@@ -916,3 +916,49 @@ fn test_should_error_extends_cycle() {
         ),
     }
 }
+
+#[test]
+fn test_constant_override_user_wins() {
+    let path = Path::new("test_cases/should_pass/constant_override.tla");
+    let input = fs::read_to_string(path).expect("failed to read spec file");
+    let spec = parse(&input).expect("failed to parse spec");
+
+    let mut custom_set = BTreeSet::new();
+    custom_set.insert(Value::Str("a".into()));
+    custom_set.insert(Value::Str("b".into()));
+    custom_set.insert(Value::Str("c".into()));
+
+    let mut domains = Env::new();
+    domains.insert(Arc::from("BOOLEAN"), Value::Set(custom_set));
+
+    let config = CheckerConfig {
+        allow_deadlock: true,
+        ..Default::default()
+    };
+    let result = check(&spec, &domains, &config);
+
+    match result {
+        CheckResult::Ok(stats) => {
+            assert_eq!(
+                stats.states_explored, 3,
+                "BOOLEAN overridden to {{a,b,c}} should produce 3 states, got {}",
+                stats.states_explored
+            );
+        }
+        other => panic!(
+            "constant_override.tla with BOOLEAN={{a,b,c}} should pass, got: {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn test_parameterized_instance_in_init() {
+    let path = Path::new("test_cases/should_pass/param_instance_init.tla");
+    let result = check_spec_file_allow_deadlock(path);
+    assert!(
+        matches!(result, CheckResult::Ok(_)),
+        "param_instance_init.tla should pass, got: {:?}",
+        result
+    );
+}

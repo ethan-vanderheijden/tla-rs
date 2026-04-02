@@ -218,10 +218,14 @@ pub fn prepare_spec(
     spec_path: Option<&PathBuf>,
     quiet: bool,
 ) -> Result<(Env, Definitions), PrepareSpecError> {
-    let mut domains = domains.clone();
+    let user_constants = domains.clone();
+    let mut domains = Env::new();
     stdlib::load_builtins(&mut domains);
     for module in &spec.extends {
         stdlib::load_module(module, &mut domains);
+    }
+    for (k, v) in user_constants {
+        domains.insert(k, v);
     }
 
     let mut extended_defs: Definitions = BTreeMap::new();
