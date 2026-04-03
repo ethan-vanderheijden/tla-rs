@@ -52,13 +52,21 @@ pub(crate) fn resolve_parameterized_defs(
     param_inst: &ParameterizedInstance,
     inst_arg_vals: Vec<crate::ast::Value>,
 ) -> Definitions {
+    let inst_arg_exprs: Vec<Expr> = inst_arg_vals.into_iter().map(Expr::Lit).collect();
+    resolve_parameterized_defs_symbolic(param_inst, inst_arg_exprs)
+}
+
+pub(crate) fn resolve_parameterized_defs_symbolic(
+    param_inst: &ParameterizedInstance,
+    inst_arg_exprs: Vec<Expr>,
+) -> Definitions {
     use crate::substitution::{apply_substitutions, substitute_expr};
 
     let param_subs: Vec<(Arc<str>, Expr)> = param_inst
         .params
         .iter()
-        .zip(inst_arg_vals)
-        .map(|(param, val)| (param.clone(), Expr::Lit(val)))
+        .cloned()
+        .zip(inst_arg_exprs)
         .collect();
 
     let substituted_subs: Vec<(Arc<str>, Expr)> = param_inst

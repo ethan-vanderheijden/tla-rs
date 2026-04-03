@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use tla_checker::ast::{Env, Value};
-use tla_checker::checker::{CheckResult, CheckerConfig, check};
+use tla_checker::checker::{CheckResult, CheckerConfig, PrepareSpecError, check};
 use tla_checker::config::{apply_config, parse_cfg};
 use tla_checker::parser::parse;
 
@@ -38,6 +38,17 @@ fn test_should_pass_counter() {
     assert!(
         matches!(result, CheckResult::Ok(_)),
         "counter.tla should pass, got: {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_should_pass_counter_instantiated() {
+    let path = Path::new("test_cases/should_pass/counter_instance.tla");
+    let result = check_spec_file_allow_deadlock(path);
+    assert!(
+        matches!(result, CheckResult::Ok(_)),
+        "counter_instance.tla should pass, got: {:?}",
         result
     );
 }
@@ -146,7 +157,7 @@ fn test_should_error_missing_constant() {
     let result = check(&spec, &domains, &config);
 
     match result {
-        CheckResult::MissingConstants(missing) => {
+        CheckResult::PrepareError(PrepareSpecError::MissingConstants(missing)) => {
             assert!(missing.iter().any(|c| c.as_ref() == "MAX"));
         }
         other => panic!("should report missing constant MAX, got: {:?}", other),
@@ -265,7 +276,10 @@ fn test_should_fail_assume_constraint() {
     let result = check(&spec, &domains, &config);
 
     assert!(
-        matches!(result, CheckResult::AssumeViolation(0)),
+        matches!(
+            result,
+            CheckResult::PrepareError(PrepareSpecError::AssumeViolation(0))
+        ),
         "assume_constraint.tla with N=20 should violate ASSUME, got: {:?}",
         result
     );
@@ -800,7 +814,7 @@ fn test_should_error_extends_missing_module() {
     let path = Path::new("test_cases/should_error/extends_missing_module.tla");
     let result = check_spec_file(path);
     match result {
-        CheckResult::InitError(e) => {
+        CheckResult::PrepareError(PrepareSpecError::InstanceError(e)) => {
             let msg = format!("{:?}", e);
             assert!(
                 msg.contains("NotThere"),
@@ -809,7 +823,7 @@ fn test_should_error_extends_missing_module() {
             );
         }
         other => panic!(
-            "extends_missing_module.tla should produce InitError, got: {:?}",
+            "extends_missing_module.tla should produce PrepareSpecError::InstanceError, got: {:?}",
             other
         ),
     }
@@ -868,7 +882,7 @@ fn test_should_error_extends_parse_error() {
     let path = Path::new("test_cases/should_error/extends_parse_error/extends_parse_error.tla");
     let result = check_spec_file(path);
     match result {
-        CheckResult::InitError(e) => {
+        CheckResult::PrepareError(PrepareSpecError::InstanceError(e)) => {
             let msg = format!("{:?}", e);
             assert!(
                 msg.contains("Broken"),
@@ -877,7 +891,7 @@ fn test_should_error_extends_parse_error() {
             );
         }
         other => panic!(
-            "extends_parse_error.tla should produce InitError, got: {:?}",
+            "extends_parse_error.tla should produce PrepareSpecError::InstanceError, got: {:?}",
             other
         ),
     }
@@ -888,7 +902,7 @@ fn test_should_error_extends_cycle() {
     let path = Path::new("test_cases/should_error/extends_cycle/extends_cycle.tla");
     let result = check_spec_file_allow_deadlock(path);
     match result {
-        CheckResult::InitError(e) => {
+        CheckResult::PrepareError(PrepareSpecError::InstanceError(e)) => {
             let msg = format!("{:?}", e);
             assert!(
                 msg.contains("cyclic"),
@@ -897,8 +911,69 @@ fn test_should_error_extends_cycle() {
             );
         }
         other => panic!(
-            "extends_cycle.tla should produce InitError, got: {:?}",
+            "extends_cycle.tla should produce PrepareSpecError::InstanceError, got: {:?}",
             other
         ),
+    }
+}
+
+#[test]
+fn test_constant_override_user_wins() {
+    let path = Path::new("test_cases/should_pass/constant_override.tla");
+    let input = fs::read_to_string(path).expect("failed to read spec file");
+    let spec = parse(&input).expect("failed to parse spec");
+
+    let mut custom_set = BTreeSet::new();
+    custom_set.insert(Value::Str("a".into()));
+    custom_set.insert(Value::Str("b".into()));
+    custom_set.insert(Value::Str("c".into()));
+
+    let mut domains = Env::new();
+    domains.insert(Arc::from("BOOLEAN"), Value::Set(custom_set));
+
+    let config = CheckerConfig {
+        allow_deadlock: true,
+        ..Default::default()
+    };
+    let result = check(&spec, &domains, &config);
+
+    match result {
+        CheckResult::Ok(stats) => {
+            assert_eq!(
+                stats.states_explored, 3,
+                "BOOLEAN overridden to {{a,b,c}} should produce 3 states, got {}",
+                stats.states_explored
+            );
+        }
+        other => panic!(
+            "constant_override.tla with BOOLEAN={{a,b,c}} should pass, got: {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn test_parameterized_instance_in_init() {
+    let path = Path::new("test_cases/should_pass/param_instance_init.tla");
+    let result = check_spec_file_allow_deadlock(path);
+    assert!(
+        matches!(result, CheckResult::Ok(_)),
+        "param_instance_init.tla should pass, got: {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_parameterized_instance_init_unbound_var() {
+    let path = Path::new("test_cases/should_pass/param_instance_init_unbound.tla");
+    let result = check_spec_file_allow_deadlock(path);
+    match result {
+        CheckResult::Ok(stats) => {
+            assert_eq!(
+                stats.states_explored, 1,
+                "should find exactly 1 initial state"
+            );
+        }
+        other => panic!("param_instance_init_unbound.tla should pass, got: {other:?}"),
     }
 }

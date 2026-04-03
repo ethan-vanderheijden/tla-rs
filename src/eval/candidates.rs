@@ -233,7 +233,7 @@ pub(crate) fn infer_all_candidates(
     Ok(result)
 }
 
-fn restore_env(env: &mut Env, saved: Vec<(Arc<str>, Option<Value>)>) {
+pub(crate) fn restore_env(env: &mut Env, saved: Vec<(Arc<str>, Option<Value>)>) {
     for (param, prev) in saved {
         match prev {
             Some(v) => env.insert(param, v),
@@ -242,7 +242,7 @@ fn restore_env(env: &mut Env, saved: Vec<(Arc<str>, Option<Value>)>) {
     }
 }
 
-fn bind_params(
+pub(crate) fn bind_params(
     params: &[Arc<str>],
     args: &[Expr],
     env: &mut Env,
