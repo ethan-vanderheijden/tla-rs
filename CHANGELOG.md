@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.7] - 2026-04-03
+
+### Fixed
+
+- `..` (range) operator not recognized in recursive function domains (`f[i \in 1..N]`) and CHOOSE domains (`CHOOSE x \in 1..N : P`)
+- INSTANCE/EXTENDS resolution in interactive mode
+- Finding initial states through static instance references (e.g., `Init == MyInstance!Init /\ ...`)
+
+### Added
+
+- Practical TLA+ user guide with paired specs for writing actions patterns
+
 ## [0.3.6] - 2026-03-23
 
 ### Fixed
