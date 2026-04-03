@@ -28,7 +28,7 @@ use self::state::ExplorerState;
 pub fn run_interactive(spec: &Spec, domains: &Env, spec_path: &str) -> io::Result<()> {
     let spec_path_buf = PathBuf::from(spec_path);
     let (mut env, defs) = checker::prepare_spec(spec, domains, Some(&spec_path_buf), false)
-        .expect("Failed to prepare spec");
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, format!("{e:?}")))?;
 
     let init_expr = spec.init.as_ref().ok_or_else(|| {
         io::Error::new(
@@ -190,7 +190,7 @@ pub fn run_interactive_replay(
 
     let spec_path_buf = PathBuf::from(spec_path);
     let (mut env, defs) = checker::prepare_spec(spec, domains, Some(&spec_path_buf), false)
-        .expect("Failed to prepare spec");
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, format!("{e:?}")))?;
 
     let next_expr = spec.next.as_ref().ok_or_else(|| {
         io::Error::new(
